@@ -1,0 +1,357 @@
+package com.VertexVerveInc.Games;
+
+import java.util.Random;
+
+import android.app.Activity;
+import android.graphics.Typeface;
+import android.os.Bundle;
+import android.os.Handler;
+import android.view.Gravity;
+import android.view.View;
+import android.view.View.OnClickListener;
+import android.view.View.OnLongClickListener;
+import android.widget.ImageButton;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.TableRow.LayoutParams;
+import android.widget.TableLayout;
+import android.widget.TableRow;
+import android.widget.TextView;
+import android.widget.Toast;
+
+public class MinesweeperGame extends Activity
+{
+  private TextView txtMineCount;
+	private TextView txtTimer;
+	private ImageButton btnSmile;
+
+	private TableLayout mineField; // mayınların yerleşeceği tablo layoutu
+	private Block blocks[][]; // mayın tarlası için bloklar	
+	private int blockDimension = 24; // her bloğun genişliği
+	private int blockPadding = 2; // bloklar arasındaki mesafe
+
+	private int numberOfRowsInMineField = 9;
+	private int numberOfColumnsInMineField = 9;
+	private int totalNumberOfMines = 10;
+
+	// süreyi hesaplamak için kullanılan timer
+	private Handler timer = new Handler();
+	private int secondsPassed = 0;
+
+	private boolean isTimerStarted; // timer önceden başladı mı kontrol et:başlat veya başlatma!
+	private boolean areMinesSet; // mayınların yerleşip yerleşmediğini kontrol et
+	private boolean isGameOver;
+	private int minesToFind; // mayına basıldı mı
+	
+	@Override
+	public void onCreate(Bundle savedInstanceState)
+	{
+		super.onCreate(savedInstanceState);
+		setContentView(R.layout.main);
+		
+		txtMineCount = (TextView) findViewById(R.id.MineCount);
+		txtTimer = (TextView) findViewById(R.id.Timer);
+		
+		Typeface lcdFont = Typeface.createFromAsset(getAssets(),
+				"fonts/lcd2mono.ttf");
+		txtMineCount.setTypeface(lcdFont);
+		txtTimer.setTypeface(lcdFont);
+		
+		btnSmile = (ImageButton) findViewById(R.id.Smiley);
+		btnSmile.setOnClickListener(new OnClickListener()
+		{
+			@Override
+			public void onClick(View view)
+			{
+				endExistingGame();
+				startNewGame();
+			}
+		});
+		
+		mineField = (TableLayout)findViewById(R.id.MineField);
+		
+		showDialog("Click smiley to start New Game", 2000, true, false);
+	}
+
+	private void startNewGame()
+	{
+		//mayınları yerleştir ve kalanları hesapla
+		createMineField();
+		//tüm blokları göster
+		showMineField();
+		
+		minesToFind = totalNumberOfMines;
+		isGameOver = false;
+		secondsPassed = 0;
+	}
+
+	private void showMineField()
+	{
+		// ilk ve son satır sadece hesaplama yapmak için kullanılır
+		for (int row = 1; row < numberOfRowsInMineField + 1; row++)
+		{
+			TableRow tableRow = new TableRow(this);  
+			tableRow.setLayoutParams(new LayoutParams((blockDimension + 2 * blockPadding) * numberOfColumnsInMineField, blockDimension + 2 * blockPadding));
+
+			for (int column = 1; column < numberOfColumnsInMineField + 1; column++)
+			{
+				blocks[row][column].setLayoutParams(new LayoutParams(  
+						blockDimension + 2 * blockPadding,  
+						blockDimension + 2 * blockPadding)); 
+				blocks[row][column].setPadding(blockPadding, blockPadding, blockPadding, blockPadding);
+				tableRow.addView(blocks[row][column]);
+			}
+			mineField.addView(tableRow,new TableLayout.LayoutParams(  
+					(blockDimension + 2 * blockPadding) * numberOfColumnsInMineField, blockDimension + 2 * blockPadding));  
+		}
+	}
+
+	private void endExistingGame()
+	{
+		stopTimer(); // timerı durdur
+		txtTimer.setText("000"); 
+		txtMineCount.setText("000"); 
+		btnSmile.setBackgroundResource(R.drawable.smile);
+		
+		// mayın tablo layotundaki tüm satırları kaldır
+		mineField.removeAllViews();
+		
+		// değişkenlerin hepsini ouyunu sonlandırmak için set et
+		isTimerStarted = false;
+		areMinesSet = false;
+		isGameOver = false;
+		minesToFind = 0;
+	}
+
+	private void createMineField()
+	{
+		// her kenar için ekstra bir satır seç
+		// tüm ekstra 2 satır ve 2 column olur
+		// ilk ve son satır sadece hesaplama için kullan
+		//	 x|xxxxxxxxxxxxxx|x
+		//	 ------------------
+		//	 x|              |x
+		//	 x|              |x
+		//	 ------------------
+		//	 x|xxxxxxxxxxxxxx|x
+		// her bir mayın hesaplaması için kolon ve satırları x olarak işaretle
+		blocks = new Block[numberOfRowsInMineField + 2][numberOfColumnsInMineField + 2];
+
+		for (int row = 0; row < numberOfRowsInMineField + 2; row++)
+		{
+			for (int column = 0; column < numberOfColumnsInMineField + 2; column++)
+			{	
+				blocks[row][column] = new Block(this);
+				blocks[row][column].setDefaults();
+
+
+				final int currentRow = row;
+				final int currentColumn = column;
+
+				
+				blocks[row][column].setOnClickListener(new OnClickListener()
+				{
+					@Override
+					public void onClick(View view)
+					{
+						// ilk click ile timer'ı başlat
+						if (!isTimerStarted)
+						{
+							startTimer();
+							isTimerStarted = true;
+						}
+
+						// ilk click ile mayınları set et
+						if (!areMinesSet)
+						{
+							areMinesSet = true;
+							setMines(currentRow, currentColumn);
+						}
+
+						
+						if (!blocks[currentRow][currentColumn].isFlagged())
+						{
+					
+							rippleUncover(currentRow, currentColumn);
+							
+							
+							if (blocks[currentRow][currentColumn].hasMine())
+							{
+								// oyun bitti
+								finishGame(currentRow,currentColumn);
+							}
+
+							  // kazanıp kazanmadığını kontrol et
+							if (checkGameWin())
+							{
+								// kazandı olarak işaretle
+
+								winGame();
+							}
+						}
+					}
+				});
+
+				
+				blocks[row][column].setOnLongClickListener(new OnLongClickListener()
+				{
+					public boolean onLongClick(View view)
+					{
+					  // uzun clicklemede mayını aç							
+            // çevredeki tüm blokları aç
+						if (!blocks[currentRow][currentColumn].isCovered() && (blocks[currentRow][currentColumn].getNumberOfMinesInSorrounding() > 0) && !isGameOver)
+						{
+							int nearbyFlaggedBlocks = 0;
+							for (int previousRow = -1; previousRow < 2; previousRow++)
+							{
+								for (int previousColumn = -1; previousColumn < 2; previousColumn++)
+								{
+									if (blocks[currentRow + previousRow][currentColumn + previousColumn].isFlagged())
+									{
+										nearbyFlaggedBlocks++;
+									}
+								}
+							}
+
+							
+							
+							if (nearbyFlaggedBlocks == blocks[currentRow][currentColumn].getNumberOfMinesInSorrounding())
+							{
+								for (int previousRow = -1; previousRow < 2; previousRow++)
+								{
+									for (int previousColumn = -1; previousColumn < 2; previousColumn++)
+									{
+										
+										if (!blocks[currentRow + previousRow][currentColumn + previousColumn].isFlagged())
+										{
+											
+											rippleUncover(currentRow + previousRow, currentColumn + previousColumn);
+
+											
+											if (blocks[currentRow + previousRow][currentColumn + previousColumn].hasMine())
+											{
+												// oyun bitti!
+												finishGame(currentRow + previousRow, currentColumn + previousColumn);
+											}
+
+	                    // oyunu kazandı mı kontrol et
+											if (checkGameWin())
+											{
+												// kazandı olarak işaretle
+												winGame();
+											}
+										}
+									}
+								}
+							}
+
+							
+						if (blocks[currentRow][currentColumn].isClickable() && 
+								(blocks[currentRow][currentColumn].isEnabled() || blocks[currentRow][currentColumn].isFlagged()))
+						{
+
+							
+							if (!blocks[currentRow][currentColumn].isFlagged() && !blocks[currentRow][currentColumn].isQuestionMarked())
+							{
+								blocks[currentRow][currentColumn].setBlockAsDisabled(false);
+								blocks[currentRow][currentColumn].setFlagIcon(true);
+								blocks[currentRow][currentColumn].setFlagged(true);
+								minesToFind--; // mayın sayısını azalt
+								updateMineCountDisplay();
+							}
+							
+							else if (!blocks[currentRow][currentColumn].isQuestionMarked())
+							{
+								blocks[currentRow][currentColumn].setBlockAsDisabled(true);
+								blocks[currentRow][currentColumn].setQuestionMarkIcon(true);
+								blocks[currentRow][currentColumn].setFlagged(false);
+								blocks[currentRow][currentColumn].setQuestionMarked(true);
+								minesToFind++; // mayın sayısını arttır								
+                updateMineCountDisplay();
+							}
+							
+							else
+							{
+								blocks[currentRow][currentColumn].setBlockAsDisabled(true);
+								blocks[currentRow][currentColumn].clearAllIcons();
+								blocks[currentRow][currentColumn].setQuestionMarked(false);
+							
+								if (blocks[currentRow][currentColumn].isFlagged())
+								{
+									minesToFind++; // mayın sayısını arttır	
+									updateMineCountDisplay();
+								}
+								
+								blocks[currentRow][currentColumn].setFlagged(false);
+							}
+							
+							updateMineCountDisplay(); // mayınları güncelle
+						}
+
+						return true;
+					}
+				});
+			}
+		}
+	}
+
+	private boolean checkGameWin()
+	{
+		for (int row = 1; row < numberOfRowsInMineField + 1; row++)
+		{
+			for (int column = 1; column < numberOfColumnsInMineField + 1; column++)
+			{
+				if (!blocks[row][column].hasMine() && blocks[row][column].isCovered())
+				{
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+
+	private void updateMineCountDisplay()
+	{
+		if (minesToFind < 0)
+		{
+			txtMineCount.setText(Integer.toString(minesToFind));
+		}
+		else if (minesToFind < 10)
+		{
+			txtMineCount.setText("00" + Integer.toString(minesToFind));
+		}
+		else if (minesToFind < 100)
+		{
+			txtMineCount.setText("0" + Integer.toString(minesToFind));
+		}
+		else
+		{
+			txtMineCount.setText(Integer.toString(minesToFind));
+		}
+	}
+
+	private void winGame()
+	{
+		stopTimer();
+		isTimerStarted = false;
+		isGameOver = true;
+		minesToFind = 0; // mayın sayısını 0 olarak set et
+
+		// sevinen ikonu gösterimi :)
+		btnSmile.setBackgroundResource(R.drawable.papatya);
+
+		updateMineCountDisplay(); // mayın sayısını update et
+
+		// bütün butonları disable et
+		for (int row = 1; row < numberOfRowsInMineField + 1; row++)
+		{
+			for (int column = 1; column < numberOfColumnsInMineField + 1; column++)
+			{
+				blocks[row][column].setClickable(false);
+				if (blocks[row][column].hasMine())
+				{
+					blocks[row][column].setBlockAsDisabled(false);
+					blocks[row][column].setFlagIcon(true);
+				}
+			}
+		}
